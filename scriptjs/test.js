@@ -22,30 +22,32 @@ console.log("Using address:", wallet.address);
 
 async function setupTest() {
 
-    // === Read back ===
-      for (let i = 0; i < 3; i++) {
-        const cand = await bulletin.candidates(i + 1);
-        console.log(`Candidate ${i + 1} addr: ${cand}`);
-      }
-    
-      for (let i = 0; i < 5; i++) {
-        const voter = await bulletin.voterList(i);
-        console.log(`Voter ${i} addr: ${voter}`);
-      }
+  // === Read back ===
+  for (let i = 0; i < 3; i++) {
+    const cand = await bulletin.candidates(i + 1);
+    console.log(`Candidate ${i + 1} addr: ${cand}`);
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const voter = await bulletin.voterList(i);
+    console.log(`Voter ${i} addr: ${voter}`);
+  }
 }
 
 async function signupTest() {
- 
-    for (let i = 0; i < 5; i++) {
-      const voter = await bulletin.voterList(i);
-      const voterDetails = await bulletin.voters(voter)
-      console.log(`Voter ${i} details: ${voterDetails}`);
 
-//       console.log(`
-// x${i+1} = ${voterDetails[2]}
-// h${i+1} = ${voterDetails[3]} 
-//        `)
-    }
+  for (let i = 0; i < 5; i++) {
+    const voter = await bulletin.voterList(i);
+    const voterDetails = await bulletin.voters(voter)
+    console.log(`Voter ${i} details: ${voterDetails}`);
+
+    //       console.log(`
+    // x${i+1} = ${voterDetails[2]}
+    // h${i+1} = ${voterDetails[3]} 
+    //        `)
+  }
+  const ttt=await bulletin.accum();
+  console.log(ttt);
 }
 
 
@@ -57,10 +59,10 @@ async function main() {
 }
 
 async function runTransaction() {
-    const tx = await bulletin.nextState();
-    await tx.wait();
-    console.log("Computed H");
-    
+  const tx = await bulletin.nextState();
+  await tx.wait();
+  console.log("Computed H");
+
 }
 
 

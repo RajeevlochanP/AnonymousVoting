@@ -8,13 +8,23 @@ contract Bulletin {
     uint256 public g;
     uint256 public q;
     uint256 public p;
+    uint256 public N;
+    uint256 public base;
     uint8 internal state;
-
+    uint256 public accum;
     struct Voter {
         bool registered;
         bool voted;
         uint256 X;
         uint256 h;
+        uint256 Y;
+    }
+
+    struct Proof {
+        uint256 r;
+        uint256 d;
+        uint256 a;
+        uint256 b;
     }
 
     mapping(address => Voter) public voters;
@@ -36,6 +46,7 @@ contract Bulletin {
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
     event voterSignupEvent(address indexed eoa, uint256 X);
     event stateChange(uint8 s);
+    event VoteCast(address indexed voter, uint256 gX, uint256 Y);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Bulletin: only owner");
@@ -50,14 +61,21 @@ contract Bulletin {
         g = _g;
         q = _q;
         p = _p;
+        state = 0;
+        N=0;
+        base=16;
     }
 
     function nextState() external onlyOwner {
-        state++;
+        state = state + 1;
         console.log("New State", state);
         if (state == 2) {
             computeH();
         }
+        if (state == 3) {
+            tally();
+        }
+        // console.log(state);
         emit stateChange(state);
     }
 
@@ -79,7 +97,13 @@ contract Bulletin {
         for (uint256 i = 0; i < accounts.length; i++) {
             address voter = accounts[i];
             require(!voters[voter].registered, "voter already registered");
-            voters[voter] = Voter({registered: true, voted: false, X: 0, h: 0});
+            voters[voter] = Voter({
+                registered: true,
+                voted: false,
+                X: 0,
+                h: 0,
+                Y: 0
+            });
             voterList.push(voter);
             emit VoterRegistered(voter);
         }
@@ -129,6 +153,8 @@ contract Bulletin {
         uint256 phi,
         uint256 n // n should be hash output, not uint256
     ) public {
+        console.log(state, " : dfj");
+        require(state == 1, "Not in signup phase");
         uint256 h = uint256(keccak256(abi.encodePacked(g, X, gV))) % q;
         require(n == h, "invalid n");
         require(X < p, "X not in the group");
@@ -139,10 +165,11 @@ contract Bulletin {
         // you need modular exponentiation instead
         uint256 lhs = gV;
         uint256 gP = modExp(g, phi, p);
-        uint256 xN =  modExp(X, n, p);
-        uint256 rhs = mulmod(gP,xN, p);
+        uint256 xN = modExp(X, n, p);
+        uint256 rhs = mulmod(gP, xN, p);
 
         require(lhs == rhs, "Invalid Proof ");
+        N++;
 
         voters[msg.sender].X = X;
         emit voterSignupEvent(msg.sender, X);
@@ -170,9 +197,13 @@ contract Bulletin {
         // Compute suffix products
         temp = 1;
         for (uint256 j = len; j > 0; j--) {
-            suffix[j-1] = temp;
-            if (voters[voterList[j-1]].X != 0) {
-                temp = mulmod(temp, modExp(voters[voterList[j-1]].X,p-2,p), p);
+            suffix[j - 1] = temp;
+            if (voters[voterList[j - 1]].X != 0) {
+                temp = mulmod(
+                    temp,
+                    modExp(voters[voterList[j - 1]].X, p - 2, p),
+                    p
+                );
             }
         }
 
@@ -186,6 +217,94 @@ contract Bulletin {
         }
     }
 
+    /* ========== VOTING ========== */
+
+    function vote(
+        uint256 gX,
+        uint256 Y,
+        uint256 c,
+        Proof[] memory proofs
+    ) public {
+        // 1. Pre-computation checks remain the same
+        require(state == 2, "Bulletin: Not in voting phase");
+        Voter storage voter = voters[msg.sender];
+        require(voter.registered, "Bulletin: Not a registered voter");
+        require(!voter.voted, "Bulletin: Already voted");
+        require(voter.h != 0, "Bulletin: Voter's h-value not computed");
+        require(
+            proofs.length == candidateCount + 1,
+            "Bulletin: Incorrect proof length"
+        );
+
+        // 2. Recomputing 'c' remains the same
+        uint256 len = proofs.length;
+        bytes memory packedData = abi.encodePacked(gX, Y);
+        for (uint256 i = 0; i < len; i++) {
+            packedData = abi.encodePacked(packedData, proofs[i].a, proofs[i].b);
+        }
+        uint256 recomputed_c = uint256(keccak256(packedData)) % q;
+        require(recomputed_c == c, "Bulletin: Invalid challenge value c");
+
+        // 3. Verifying sum of d's remains the same
+        uint256 sumD = 0;
+        for (uint256 i = 0; i < len; i++) {
+            sumD = (sumD + proofs[i].d);
+        }
+        require(sumD % q == c, "Bulletin: Sum of d's does not match c");
+
+        // 4. Verify each individual proof component.
+        uint256 h = voter.h;
+        for (uint256 i = 0; i < len; i++) {
+            Proof memory proof = proofs[i];
+
+            // === SCOPE 1: Check the 'a' component ===
+            {
+                uint256 lhs_a = mulmod(
+                    modExp(g, proof.r, p),
+                    modExp(gX, proof.d, p),
+                    p
+                );
+                console.log("a : ", lhs_a);
+                require(
+                    lhs_a == proof.a,
+                    "Bulletin: Proof validation failed for a"
+                );
+            } // 'lhs_a' is now off the stack
+
+            // === SCOPE 2: Check the 'b' component ===
+            {
+                uint256 g_i = modExp(g, modExp(2, 4 * i, q), p); // NOTE: Corrected your g^i calculation
+                uint256 g_i_inv = modExp(g_i, p - 2, p);
+                uint256 Y_div_gi = mulmod(Y, g_i_inv, p);
+
+                uint256 lhs_b = mulmod(
+                    modExp(h, proof.r, p),
+                    modExp(Y_div_gi, proof.d, p),
+                    p
+                );
+                require(
+                    lhs_b == proof.b,
+                    "Bulletin: Proof validation failed for b"
+                );
+            } // All variables from this scope are now off the stack
+        }
+
+        // 5. Final steps remain the same
+        voter.voted = true;
+        voter.Y=Y;
+        emit VoteCast(msg.sender, gX, Y);
+    }
+
+    function tally() public {
+        uint256 len=voterList.length;
+        uint256 accumulator=1;
+        for(uint256 i=0;i<len;i++){
+            console.log("Y :",voters[voterList[i]].Y);
+            accumulator=mulmod(accumulator,voters[voterList[i]].Y,p);
+        }
+        console.log("accum : ",accumulator);
+        accum=accumulator;
+    } 
 
     // function vote(uint256 candidateId, uint256 X) external {
     //     bytes32 k = keyOf(msg.sender);
