@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
+import "../lib/forge-std/src/console.sol";
 
 contract Bulletin {
     address public owner;
 
     uint256 public g;
     uint256 public q;
+    uint256 public p;
     uint8 internal state;
 
     struct Voter {
@@ -40,16 +42,19 @@ contract Bulletin {
         _;
     }
 
-    constructor(uint256 _g, uint256 _q) {
+    constructor(uint256 _g, uint256 _p, uint256 _q) {
         require(_q > 2, "q must be > 2");
+        require(_q < _p, "q must be < p");
         require(_g > 1 && _g < _q, "g must be 2 <= g < q");
         owner = msg.sender;
         g = _g;
         q = _q;
+        p = _p;
     }
 
     function nextState() external onlyOwner {
         state++;
+        console.log("New State", state);
         if (state == 2) {
             computeH();
         }
@@ -122,19 +127,22 @@ contract Bulletin {
         uint256 X,
         uint256 gV,
         uint256 phi,
-        bytes32 n // n should be hash output, not uint256
+        uint256 n // n should be hash output, not uint256
     ) public {
-        require(n == keccak256(abi.encodePacked(g, X, gV)), "invalid n");
-        require(X < q, "X not in the group");
-        require(gV < q, "gV not in the group");
+        uint256 h = uint256(keccak256(abi.encodePacked(g, X, gV))) % q;
+        require(n == h, "invalid n");
+        require(X < p, "X not in the group");
+        require(gV < p, "gV not in the group");
         require(voters[msg.sender].X == 0, "already sign up");
 
         // WARNING: (g ** phi) % q overflows for large phi
         // you need modular exponentiation instead
         uint256 lhs = gV;
-        uint256 rhs = (modExp(g, phi, q) * modExp(X, uint256(n), q)) % q;
+        uint256 gP = modExp(g, phi, p);
+        uint256 xN =  modExp(X, n, p);
+        uint256 rhs = mulmod(gP,xN, p);
 
-        require(lhs == rhs, "invalid proof");
+        require(lhs == rhs, "Invalid Proof ");
 
         voters[msg.sender].X = X;
         emit voterSignupEvent(msg.sender, X);
@@ -142,23 +150,42 @@ contract Bulletin {
 
     /* ========== VOTING ========== */
 
-    function computeH() internal {
+    function computeH() public {
+        console.log("Running ComputeH");
         uint256 len = voterList.length;
+        if (len == 0) return;
+
+        uint256[] memory prefix = new uint256[](len);
+        uint256[] memory suffix = new uint256[](len);
+
+        // Compute prefix products
         uint256 temp = 1;
         for (uint256 i = 0; i < len; i++) {
+            prefix[i] = temp;
             if (voters[voterList[i]].X != 0) {
-                voters[voterList[i]].h = temp;
-                temp = (temp * voters[voterList[i]].X) % q;
+                temp = mulmod(temp, voters[voterList[i]].X, p);
             }
         }
+
+        // Compute suffix products
         temp = 1;
-        for (uint256 j = len; j < 0; j--) {
-            if (voters[voterList[j]].X != 0) {
-                voters[voterList[j]].h = temp;
-                temp = (temp * modExp(voters[voterList[j]].X, q-2, q)) % q;
+        for (uint256 j = len; j > 0; j--) {
+            suffix[j-1] = temp;
+            if (voters[voterList[j-1]].X != 0) {
+                temp = mulmod(temp, modExp(voters[voterList[j-1]].X,p-2,p), p);
+            }
+        }
+
+        // Combine prefix and suffix for each h[i]
+        for (uint256 k = 0; k < len; k++) {
+            if (voters[voterList[k]].X != 0) {
+                voters[voterList[k]].h = mulmod(prefix[k], suffix[k], p);
+            } else {
+                voters[voterList[k]].h = 0; // convention if X=0
             }
         }
     }
+
 
     // function vote(uint256 candidateId, uint256 X) external {
     //     bytes32 k = keyOf(msg.sender);

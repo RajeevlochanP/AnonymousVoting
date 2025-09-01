@@ -18,7 +18,7 @@ contract BulletinScript is Script {
 
         vm.startBroadcast();
 
-        bulletin = new Bulletin(3, 97);
+        bulletin = new Bulletin(3, 97, 96);
         console.log("Bulletin deployed at:", address(bulletin));
 
 
